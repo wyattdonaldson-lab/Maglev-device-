@@ -1,0 +1,88 @@
+// ===== MagLev with Arduino + LMD18201 =====
+// A0: IR height sensor (10 kΩ pull-down)
+// D9: PWM to LMD18201 pin 5
+// LMD18201 pins 3,4,7 → GND; pin 6 → ~19 V; pins 2 & 11 → coil
+
+const int sensorPin = A0;
+const int pwmPin    = 9;
+
+// -------- USER SETTINGS --------
+
+// Start here; later change setpoint to the sensor value at desired height
+int   setpoint = 500;     // target sensor value (0–1023)
+
+int   maxPWM   = 120;     // safety limit (0–255); keeps pull gentler
+
+// PID gains - start with conservative values
+float Kp = 0.4;
+float Ki = 0.0005;
+float Kd = 15.0;
+
+// -------- INTERNAL STATE --------
+float integral  = 0.0;
+float lastError = 0.0;
+unsigned long lastTime = 0;
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(pwmPin, OUTPUT);
+
+  analogWrite(pwmPin, 0);     // coil off at start
+  lastTime = millis();
+
+  Serial.println("MagLev controller started.");
+  Serial.println("1) Try the sensor test sketch first to see range.");
+  Serial.println("2) Set setpoint to sensor value at your desired height.");
+  Serial.println("3) Then use this sketch for levitation.");
+}
+
+void loop() {
+  // ----- Read sensor -----
+  int sensor = analogRead(sensorPin);   // 0–1023
+
+  // ----- Time step -----
+  unsigned long now = millis();
+  float dt = (now - lastTime) / 1000.0; // seconds
+  if (dt <= 0) dt = 0.001;
+  lastTime = now;
+
+  // ----- Error direction -----
+  // This line means:
+  //   if setpoint - sensor is positive → magnet is below target → add pull
+  //   if negative → magnet is above target → reduce pull
+  float error = (float)setpoint - (float)sensor;
+
+  //  OPTIONAL: if your sensor behaves backwards, use instead:
+  //  float error = (float)sensor - (float)setpoint;
+
+
+  // ----- PID terms -----
+  integral += error * dt;
+  // Anti-windup clamping (keeps integrator from blowing up)
+  if (integral > 1000)  integral = 1000;
+  if (integral < -1000) integral = -1000;
+
+  float derivative = (error - lastError) / dt;
+  lastError = error;
+
+  float output = Kp * error + Ki * integral + Kd * derivative;
+
+  // ----- Convert to PWM (0–255), with safety clamp -----
+  int pwm = (int)output;
+  if (pwm < 0)      pwm = 0;
+  if (pwm > maxPWM) pwm = maxPWM;
+
+  analogWrite(pwmPin, pwm);
+
+  // ----- Debug output -----
+  Serial.print("Sensor: ");
+  Serial.print(sensor);
+  Serial.print("  Setpoint: ");
+  Serial.print(setpoint);
+  Serial.print("  PWM: ");
+  Serial.print(pwm);
+  Serial.print("  Error: ");
+  Serial.println(error);
+
+  delay(5);  // small delay so serial doesn't overflow
+}
